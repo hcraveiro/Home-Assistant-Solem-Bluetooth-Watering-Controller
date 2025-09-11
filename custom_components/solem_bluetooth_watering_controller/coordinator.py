@@ -232,12 +232,12 @@ class SolemCoordinator(DataUpdateCoordinator):
 
         if storage_data:
             self.will_it_rain_today = storage_data.get("will_it_rain_today")
-            self.will_it_rain_today_forecast = storage_data.get("will_it_rain_today_forecast")
+            self.will_it_rain_today_forecast = storage_data.get("will_it_rain_today_forecast") or []
             if self.weather_api:
                 self.weather_api._cache_forecast = self.will_it_rain_today_forecast
             self.has_rained_today = storage_data.get("has_rained_today")
             self.is_raining_now = storage_data.get("is_raining_now")
-            self.is_raining_now_json = storage_data.get("is_raining_now_json")
+            self.is_raining_now_json = storage_data.get("is_raining_now_json") or {}
             if self.weather_api:
                 self.weather_api._cache_current = self.is_raining_now_json
             self.irrigation_manual_duration = storage_data.get("irrigation_manual_duration")
@@ -299,8 +299,6 @@ class SolemCoordinator(DataUpdateCoordinator):
                 self.last_sprinkle = last_sprinkle or dt_util.now()
 
             # Normalize all datetimes to be aware
-            from homeassistant.util import dt as dt_util
-            from .util import ensure_aware
             self.last_reset = ensure_aware(self.last_reset)
             self.last_rain = ensure_aware(self.last_rain)
             self.last_sprinkle = ensure_aware(self.last_sprinkle)
@@ -330,8 +328,7 @@ class SolemCoordinator(DataUpdateCoordinator):
 
     async def save_persistent_data(self):
         """Save persistent data on storage."""
-        from .util import ensure_aware
-        
+
         if isinstance(self.last_reset, str):
             self.last_reset = datetime.fromisoformat(self.last_reset)
         if isinstance(self.last_rain, str):
