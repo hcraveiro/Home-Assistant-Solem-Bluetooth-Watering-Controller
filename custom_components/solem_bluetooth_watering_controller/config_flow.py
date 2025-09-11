@@ -177,7 +177,7 @@ class SolemConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_SENSORS): selector(
                     {"entity": {"domain": "zone"}}
                 ),
-                vol.Required(OPEN_WEATHER_MAP_API_KEY): str,
+                vol.Optional(OPEN_WEATHER_MAP_API_KEY, default=""): str,
                 vol.Required(SPRINKLE_WITH_RAIN): selector(
                     {
                         "select": {
@@ -310,7 +310,7 @@ class SolemConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_SENSORS, default=config_entry.data[CONF_SENSORS]): selector(
                         {"entity": {"domain": "zone"}}
                     ),
-                    vol.Required(OPEN_WEATHER_MAP_API_KEY, default=config_entry.data[OPEN_WEATHER_MAP_API_KEY]): str,
+                    vol.Optional(OPEN_WEATHER_MAP_API_KEY, default=config_entry.data.get(OPEN_WEATHER_MAP_API_KEY, "")): str,
                     vol.Required(SPRINKLE_WITH_RAIN, default=config_entry.data[SPRINKLE_WITH_RAIN]): selector(
                         {
                             "select": {
