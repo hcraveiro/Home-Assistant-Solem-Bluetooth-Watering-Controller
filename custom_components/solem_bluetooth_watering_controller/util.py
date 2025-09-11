@@ -1,6 +1,6 @@
 import random
 import uuid
-from datetime import datetime
+from datetime import time, datetime
 from homeassistant.util import dt as dt_util
 
 def mac_to_uuid(mac: str, last_part: int ) -> str:
@@ -30,3 +30,25 @@ def ensure_aware(dt_obj: datetime | None) -> datetime | None:
     if dt_obj and dt_obj.tzinfo is None:
         return dt_util.as_local(dt_obj)
     return dt_obj
+
+def parse_time_string(value: str) -> time:
+    """Parse a time string like 'HH:MM' or 'HH:MM:SS' into a time object.
+    Raises ValueError on invalid format."""
+    if not isinstance(value, str):
+        raise ValueError(f"Time must be string, got {type(value)}")
+
+    value = value.strip()
+    # Try HH:MM:SS
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            continue
+
+    # Also accept 'H' (e.g., "6" → 06:00)
+    if value.isdigit():
+        h = int(value)
+        if 0 <= h <= 23:
+            return time(hour=h, minute=0, second=0)
+
+    raise ValueError(f"Invalid time format: '{value}'. Expected 'HH:MM' or 'HH:MM:SS'.")
