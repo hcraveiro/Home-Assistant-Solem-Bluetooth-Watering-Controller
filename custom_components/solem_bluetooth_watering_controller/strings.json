@@ -17,7 +17,7 @@
         "title": "Basic data",
         "data": {
           "controller_mac_address": "Controller MAC Address",
-          "open_weather_map_api_key": "OpenWeatherMap API Key",
+          "open_weather_map_api_key": "OpenWeatherMap API Key (optional)",
           "num_stations": "Number of stations",
           "sensors": "Controller location",
           "sprinkle_with_rain": "Sprinkle even when raining"
@@ -26,7 +26,7 @@
       "reconfigure": {
         "data": {
           "controller_mac_address": "Controller MAC Address",
-          "open_weather_map_api_key": "OpenWeatherMap API Key",
+          "open_weather_map_api_key": "OpenWeatherMap API Key (optional)",
           "num_stations": "Number of stations",
           "sensors": "Controller location",
           "sprinkle_with_rain": "Sprinkle even when raining"
