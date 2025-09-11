@@ -26,7 +26,7 @@ For each controller that you want to use, you should add a config entry. You wil
 * which is the bluetooth device
 * the number of stations your controller have
 * the controller location (it loads the zones you have in HA)
-* the OpenWeatherMap API key (you will need to create an API key. first you need to create an [account](https://home.openweathermap.org/users/sign_up))
+* the OpenWeatherMap API key (optional - you will need to create an API key. first you need to create an [account](https://home.openweathermap.org/users/sign_up))
 * sprinkle even when raining (a true/false dropdown - true if you still want to sprinke even if it's raining, false otherwise)
 
 Afterwards an empty irrigation schedule is created. If you want to control it you will need the [Solem Schedule Card](https://github.com/hcraveiro/solem-schedule-card) installed. Previously I had it on the config flow but it is so not user friendly that I decided that a card would be better.
