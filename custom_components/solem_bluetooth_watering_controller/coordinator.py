@@ -178,20 +178,20 @@ class SolemCoordinator(DataUpdateCoordinator):
             self.latitude = zone_state.attributes.get("latitude")
             self.longitude = zone_state.attributes.get("longitude")
 
-        self.soil_moisture_sensor = config_entry.data.get("soil_moisture_sensor")
+        self.soil_moisture_sensor = self.config_entry.data.get("soil_moisture_sensor")
         self.soil_moisture_threshold = float(config_entry.data.get("soil_moisture_threshold", 0))
 
         # set variables from options.  You need a default here in case options have not been set
         self.poll_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         )
-        self.bluetooth_timeout = config_entry.options.get(
+        self.bluetooth_timeout = cself.onfig_entry.options.get(
             BLUETOOTH_TIMEOUT, BLUETOOTH_DEFAULT_TIMEOUT
         )
-        self.openweathermap_api_timeout = config_entry.options.get(
+        self.openweathermap_api_timeout = self.config_entry.options.get(
             OPEN_WEATHER_MAP_API_CACHE_TIMEOUT, OPEN_WEATHER_MAP_API_CACHE_DEFAULT_TIMEOUT
         )
-        self.solem_api_mock = config_entry.options.get(SOLEM_API_MOCK, "false") == "true"
+        self.solem_api_mock = self.config_entry.options.get(SOLEM_API_MOCK, "false") == "true"
 
         self.api = SolemAPI(self.hass, mac_address=self.controller_mac_address, bluetooth_timeout=self.bluetooth_timeout)
         if self.openweathermap_api_key:
@@ -204,8 +204,8 @@ class SolemCoordinator(DataUpdateCoordinator):
         else:
             self.weather_api = None
 
-        self.num_stations = config_entry.data.get("num_stations", 2)
-        self.station_areas = config_entry.data.get("station_areas", [0] * self.num_stations)
+        self.num_stations = self.config_entry.data.get("num_stations", 2)
+        self.station_areas = self.config_entry.data.get("station_areas", [0] * self.num_stations)
         if not isinstance(self.station_areas, list) or len(self.station_areas) != self.num_stations:
             _LOGGER.warning(f"{self.controller_mac_address} - station_areas missing or invalid on update, setting defaults.")
             self.station_areas = [0] * self.num_stations
