@@ -118,7 +118,7 @@ class SolemCoordinator(DataUpdateCoordinator):
             for station_id in range(1, self.num_stations + 1)
         ]
         
-        self.api = SolemAPI(mac_address=self.controller_mac_address, bluetooth_timeout=self.bluetooth_timeout)
+        self.api = SolemAPI(self.hass, mac_address=self.controller_mac_address, bluetooth_timeout=self.bluetooth_timeout)
         if self.openweathermap_api_key:
             self.weather_api = OpenWeatherMapAPI(
                 self.openweathermap_api_key,
@@ -193,7 +193,7 @@ class SolemCoordinator(DataUpdateCoordinator):
         )
         self.solem_api_mock = config_entry.options.get(SOLEM_API_MOCK, "false") == "true"
 
-        self.api = SolemAPI(mac_address=self.controller_mac_address, bluetooth_timeout=self.bluetooth_timeout)
+        self.api = SolemAPI(self.hass, mac_address=self.controller_mac_address, bluetooth_timeout=self.bluetooth_timeout)
         if self.openweathermap_api_key:
             self.weather_api = OpenWeatherMapAPI(
                 self.openweathermap_api_key,
@@ -723,7 +723,7 @@ class SolemCoordinator(DataUpdateCoordinator):
             if not self.sprinkle_with_rain:
                 for station_id in range(1, self.num_stations + 1):
                     if self.stations[station_id - 1].state == "Sprinkling":
-                        self.stop_irrigation()
+                        await self.stop_irrigation()
                         break
         
         if self.weather_api:
@@ -1018,6 +1018,7 @@ class SolemCoordinator(DataUpdateCoordinator):
         duration = int(minutes if minutes is not None else self.irrigation_manual_duration)
         _LOGGER.info(f"{self.controller_mac_address} - Going to start watering on station {station} for {duration} minutes...")
         
+        self.irrigation_stop_event.clear()
         try:
             await self.api.sprinkle_station_x_for_y_minutes(station, duration)
         except APIConnectionError as ex:
