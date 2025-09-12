@@ -20,7 +20,9 @@
           "open_weather_map_api_key": "OpenWeatherMap API Key (optional)",
           "num_stations": "Number of stations",
           "sensors": "Controller location",
-          "sprinkle_with_rain": "Sprinkle even when raining"
+          "sprinkle_with_rain": "Sprinkle even when raining",
+          "soil_moisture_sensor": "Soil Moisture Sensor",
+          "soil_moisture_threshold": "Soil Moisture Threshold (%)"
         }
       },
       "reconfigure": {
@@ -29,7 +31,9 @@
           "open_weather_map_api_key": "OpenWeatherMap API Key (optional)",
           "num_stations": "Number of stations",
           "sensors": "Controller location",
-          "sprinkle_with_rain": "Sprinkle even when raining"
+          "sprinkle_with_rain": "Sprinkle even when raining",
+          "soil_moisture_sensor": "Soil Moisture Sensor",
+          "soil_moisture_threshold": "Soil Moisture Threshold (%)"
         }
       },
       "station_areas": {
