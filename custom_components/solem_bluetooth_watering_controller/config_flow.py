@@ -68,7 +68,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         # ----------------------------------------------------------------------------
         mac_address = data[CONTROLLER_MAC_ADDRESS].rsplit(' - ', 1)
         _LOGGER.debug(mac_address)
-        api = SolemAPI(mac_address[1], BLUETOOTH_DEFAULT_TIMEOUT)
+        api = SolemAPI(hass, mac_address[1], BLUETOOTH_DEFAULT_TIMEOUT)
         await api.connect()
         _LOGGER.debug(f"Connected to Bluetooth controller {mac_address[1]}")
     except APIConnectionError as err:
@@ -156,7 +156,7 @@ class SolemConfigFlow(ConfigFlow, domain=DOMAIN):
 
         existing_entries = {entry.data.get(CONTROLLER_MAC_ADDRESS) for entry in self.hass.config_entries.async_entries(DOMAIN)}
 
-        api = SolemAPI(None, BLUETOOTH_DEFAULT_TIMEOUT)
+        api = SolemAPI(self.hass, None, BLUETOOTH_DEFAULT_TIMEOUT)
         bt_devices = await api.scan_bluetooth()
         options = [
             {"value": f"{device.name or 'Unknown'} - {device.address}", "label": f"{device.name or 'Unknown'} - {device.address}"}
@@ -287,47 +287,46 @@ class SolemConfigFlow(ConfigFlow, domain=DOMAIN):
                 
                 return await self.async_step_station_areas_reconfigure()
 
-        api = SolemAPI(None, BLUETOOTH_DEFAULT_TIMEOUT)
+        api = SolemAPI(self.hass, None, BLUETOOTH_DEFAULT_TIMEOUT)
         bt_devices = await api.scan_bluetooth()
         options = [
             {"value": f"{device.name or 'Unknown'} - {device.address}", "label": f"{device.name or 'Unknown'} - {device.address}"}
             for device in bt_devices
         ]
 
+        schema_dict = {
+            vol.Required(CONTROLLER_MAC_ADDRESS, default=config_entry.data[CONTROLLER_MAC_ADDRESS]): selector({
+                "select": {"options": options, "mode": "dropdown"}
+            }),
+            vol.Required(NUM_STATIONS, default=config_entry.data[NUM_STATIONS]): vol.All(vol.Coerce(int), vol.Clamp(min=1)),
+            vol.Required(CONF_SENSORS, default=config_entry.data[CONF_SENSORS]): selector({"entity": {"domain": "zone"}}),
+            vol.Optional(OPEN_WEATHER_MAP_API_KEY, default=config_entry.data.get(OPEN_WEATHER_MAP_API_KEY, "")): str,
+            vol.Required(SPRINKLE_WITH_RAIN, default=config_entry.data[SPRINKLE_WITH_RAIN]): selector({
+                "select": {"options": ["false", "true"], "mode": "dropdown", "translation_key": "true_false_selector"}
+            }),
+        }
+        
+        # Apenas define default se existir um entity_id guardado
+        soil_default = config_entry.data.get(SOIL_MOISTURE_SENSOR)
+        if soil_default:
+            schema_dict[vol.Optional(SOIL_MOISTURE_SENSOR, default=soil_default)] = selector(
+                {"entity": {"domain": "sensor", "device_class": "humidity"}}
+            )
+        else:
+            schema_dict[vol.Optional(SOIL_MOISTURE_SENSOR)] = selector(
+                {"entity": {"domain": "sensor", "device_class": "humidity"}}
+            )
+        
+        schema_dict[vol.Optional(
+            SOIL_MOISTURE_THRESHOLD,
+            default=config_entry.data.get(SOIL_MOISTURE_THRESHOLD, DEFAULT_SOIL_MOISTURE)
+        )] = vol.All(vol.Coerce(float), vol.Range(min=0, max=100))
+        
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                     vol.Required(CONTROLLER_MAC_ADDRESS, default=config_entry.data[CONTROLLER_MAC_ADDRESS]): selector(
-                        {
-                            "select": {
-                                "options": options,
-                                "mode": "dropdown",
-                            }
-                        }
-                    ),
-                    vol.Required(NUM_STATIONS, default=config_entry.data[NUM_STATIONS]): (vol.All(vol.Coerce(int), vol.Clamp(min=1))),
-                    vol.Required(CONF_SENSORS, default=config_entry.data[CONF_SENSORS]): selector(
-                        {"entity": {"domain": "zone"}}
-                    ),
-                    vol.Optional(OPEN_WEATHER_MAP_API_KEY, default=config_entry.data.get(OPEN_WEATHER_MAP_API_KEY, "")): str,
-                    vol.Required(SPRINKLE_WITH_RAIN, default=config_entry.data[SPRINKLE_WITH_RAIN]): selector(
-                        {
-                            "select": {
-                                "options": ["false", "true"],
-                                "mode": "dropdown",
-                                "translation_key": "true_false_selector",
-                            }
-                        }
-                    ),
-                    vol.Optional(SOIL_MOISTURE_SENSOR, default=config_entry.data[SOIL_MOISTURE_SENSOR]): selector(
-                        {"entity": {"domain": "sensor", "device_class": "humidity"}}
-                    ),
-                    vol.Optional(SOIL_MOISTURE_THRESHOLD, default=config_entry.data.get(SOIL_MOISTURE_THRESHOLD, DEFAULT_SOIL_MOISTURE)): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
-                }
-            ),
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
-            last_step=True,  # Adding last_step True/False decides whether form shows Next or Submit buttons
+            last_step=True,
         )
     
     
