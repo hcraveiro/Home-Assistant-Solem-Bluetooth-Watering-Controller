@@ -1,464 +1,132 @@
+"""Solem API wrapper that delegates device actions to the Solem Toolkit integration."""
+
+from __future__ import annotations
+
 import logging
-import sys
-import struct
-import asyncio
-from typing import Any
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import aiohttp
-from tenacity import retry, stop_after_attempt, wait_exponential
-from bleak import BleakClient, BleakScanner
-from bleak.backends.device import BLEDevice
-from bleak_retry_connector import establish_connection, BleakOutOfConnectionSlotsError
-from bleak.exc import BleakDBusError
-
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util.dt import as_local
 from homeassistant.util import dt as dt_util
-from homeassistant.components.bluetooth import async_ble_device_from_address
 
-from .const import OPEN_WEATHER_MAP_FORECAST_URL, OPEN_WEATHER_MAP_CURRENT_URL
+from .const import OPEN_WEATHER_MAP_CURRENT_URL, OPEN_WEATHER_MAP_FORECAST_URL
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class SolemAPI:
-    """Class for Solem API."""
+    """Adapter that forwards Solem device commands to the `solem_toolkit` integration services."""
 
-    def __init__(self, hass: HomeAssistant, mac_address: str, bluetooth_timeout: int) -> None:
-        """Initialise."""
+    _TOOLKIT_DOMAIN = "solem_toolkit"
+
+    def __init__(self, hass: HomeAssistant, mac_address: str | None, bluetooth_timeout: int) -> None:
+        """Initialize the adapter.
+
+        Args:
+            hass: Home Assistant instance.
+            mac_address: Device MAC address.
+            bluetooth_timeout: Timeout used by the underlying toolkit services.
+        """
         self.hass = hass
         self.mac_address = mac_address
-        self.characteristic_uuid: str | None = None
-        self._write_response_required: bool = False  # write com resposta?
         self.bluetooth_timeout = bluetooth_timeout
         self.mock = False
-        self._conn_lock = asyncio.Lock()  # serialize BLE connections
+
+    async def _async_call_toolkit_service(self, service: str, data: dict[str, Any] | None = None) -> None:
+        """Call a Solem Toolkit service and translate errors to APIConnectionError."""
+        if self.mock:
+            _LOGGER.debug("Mock=True, skipping toolkit service call: %s", service)
+            return
+
+        if not self.mac_address:
+            raise APIConnectionError("Device MAC address is not set")
+
+        if data is None:
+            data = {}
+
+        # Solem Toolkit supports an optional bluetooth_timeout field on services.
+        payload = {"device_mac": self.mac_address, "bluetooth_timeout": self.bluetooth_timeout, **data}
+
+        try:
+            await self.hass.services.async_call(
+                self._TOOLKIT_DOMAIN,
+                service,
+                payload,
+                blocking=True,
+            )
+        except HomeAssistantError as exc:
+            raise APIConnectionError(str(exc)) from exc
+        except Exception as exc:
+            # This also catches ServiceNotFound and other runtime errors.
+            raise APIConnectionError(f"Error calling Solem Toolkit service '{service}': {exc}") from exc
 
     async def scan_bluetooth(self):
-        devices = await BleakScanner.discover()
-        return devices
+        """Scan for BLE devices.
 
-    async def _resolve_ble_device(self):
-        """Resolve the best BLE device via HA (proxies/adapter) or fallback to direct scan."""
-        # Preferir o resolver do HA (usa proxies automaticamente)
-        ble_device = async_ble_device_from_address(self.hass, self.mac_address, connectable=True)
-        if ble_device:
-            # Alguns ambientes devolvem details como string → converter para dict
-            try:
-                details = getattr(ble_device, "details", None)
-                if isinstance(details, str):
-                    ble_device = BLEDevice(
-                        ble_device.address,
-                        ble_device.name,
-                        {"path": details},
-                        getattr(ble_device, "rssi", 0),
-                    )
-            except Exception:
-                # Se algo correr mal, seguimos com o objeto original
-                pass
-            return ble_device
+        Used by the config flow.
 
-        # Fallback: scan direto no adaptador local
-        ble_device = await BleakScanner.find_device_by_address(self.mac_address, timeout=self.bluetooth_timeout)
-        if ble_device:
-            details = getattr(ble_device, "details", None)
-            if isinstance(details, str):
-                ble_device = BLEDevice(
-                    ble_device.address,
-                    ble_device.name,
-                    {"path": details},
-                    getattr(ble_device, "rssi", 0),
-                )
-            return ble_device
+        Discovery is implemented by `solem_toolkit` so it can be reused by other
+        integrations. This method is kept for backward compatibility and simply
+        delegates to the toolkit helper.
+        """
+        try:
+            from custom_components.solem_toolkit.bluetooth import async_scan_devices
 
-        _LOGGER.debug("Device not found! Failed connecting!")
-        raise APIConnectionError("Device not found! Failed connecting!")
-
-    async def _connect_client(self) -> BleakClient:
-        """Establish a robust connection using bleak-retry-connector, with a lock."""
-        async with self._conn_lock:
-            ble_device = await self._resolve_ble_device()
-            try:
-                client = await establish_connection(
-                    BleakClient,
-                    ble_device,
-                    name=f"Solem - {self.mac_address}",
-                    timeout=self.bluetooth_timeout,
-                    max_attempts=3,
-                )
-                return client
-            except BleakOutOfConnectionSlotsError as exc:
-                raise APIConnectionError(
-                    "Bluetooth adapter/proxy out of connection slots or device busy/unreachable"
-                ) from exc
-            except AttributeError as exc:
-                _LOGGER.debug("establish_connection AttributeError: %r (ble_device=%r)", exc, ble_device, exc_info=True)
-                raise APIConnectionError(f"BLE internal attribute error during connection: {exc}") from exc
-            except Exception as exc:
-                _LOGGER.debug("establish_connection Exception: %s: %r", type(exc).__name__, exc, exc_info=True)
-                raise APIConnectionError(f"Unexpected BLE error: {exc}") from exc
+            return await async_scan_devices(self.hass, timeout=self.bluetooth_timeout)
+        except Exception as exc:
+            raise APIConnectionError(f"Bluetooth scan failed: {exc}") from exc
 
     async def connect(self) -> str:
-        """Verify if it's possible to connect to the bluetooth device and cache the write characteristic UUID."""
-        try:
-            return await self.connect_with_retries()
-        except Exception as ex:
-            _LOGGER.info(f"Timeout connecting to device after retries!, ex:{ex}")
-            raise APIConnectionError("Timeout connecting to device after retries!")
+        """Validate that the device is reachable.
 
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def connect_with_retries(self) -> str:
-        """Estabelece ligação e deteta a characteristic de escrita (com retries)."""
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return ""
+        The Solem Toolkit does not expose a dedicated 'connect' action. We call the read-only
+        `list_characteristics` service to validate connectivity without changing device state.
 
-        client = await self._connect_client()
-        try:
-            if not client.is_connected:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
+        Note: Solem Toolkit logs characteristics to HA logs.
+        """
+        await self._async_call_toolkit_service("list_characteristics")
+        return ""
 
-            _LOGGER.debug("Connected: True")
+    async def sprinkle_station_x_for_y_minutes(self, station: int, minutes: int) -> None:
+        """Sprinkle a specific station for a specified number of minutes."""
+        await self._async_call_toolkit_service(
+            "sprinkle_station_x_for_y_minutes",
+            {"station": int(station), "minutes": int(minutes)},
+        )
 
-            # Alguns backends precisam de um pequeno delay antes de enumerar serviços
-            await asyncio.sleep(0.3)
+    async def stop_manual_sprinkle(self) -> None:
+        """Stop a running manual sprinkle."""
+        await self._async_call_toolkit_service("stop_manual_sprinkle")
 
-            # Tenta get_services(); se falhar, tenta o atributo 'services'
-            try:
-                services = await client.get_services()
-            except Exception as e:
-                _LOGGER.debug(
-                    "get_services() falhou (%s: %r), fallback para client.services",
-                    type(e).__name__, e, exc_info=True
-                )
-                services = getattr(client, "services", None)
+    async def list_characteristics(self) -> None:
+        """List GATT characteristics (logs are written by Solem Toolkit)."""
+        await self._async_call_toolkit_service("list_characteristics")
 
-            if not services:
-                raise APIConnectionError("Could not enumerate GATT services")
+    async def turn_off_permanent(self) -> None:
+        """Turn off the sprinkler permanently."""
+        await self._async_call_toolkit_service("turn_off_permanent")
 
-            # Recolher *todas* as candidates com write/write-without-response
-            candidates: list[tuple[Any, set[str]]] = []
-            for service in services:
-                chars = getattr(service, "characteristics", []) or []
-                for char in chars:
-                    uuid = getattr(char, "uuid", "<no-uuid>")
-                    props_raw = getattr(char, "properties", []) or []
-                    try:
-                        props = {(p.lower() if isinstance(p, str) else str(p).lower()) for p in props_raw}
-                    except Exception:
-                        props = {str(p).lower() for p in props_raw}
+    async def turn_off_x_days(self, days: int) -> None:
+        """Turn off the sprinkler for a number of days."""
+        await self._async_call_toolkit_service("turn_off_x_days", {"days": int(days)})
 
-                    _LOGGER.debug("Candidate char %s props=%s", uuid, sorted(list(props)))
+    async def turn_on(self) -> None:
+        """Turn on the sprinkler."""
+        await self._async_call_toolkit_service("turn_on")
 
-                    if "write" in props or "write-without-response" in props:
-                        candidates.append((char, props))
+    async def sprinkle_all_stations_for_y_minutes(self, minutes: int) -> None:
+        """Sprinkle all stations for a specified number of minutes."""
+        await self._async_call_toolkit_service(
+            "sprinkle_all_stations_for_y_minutes",
+            {"minutes": int(minutes)},
+        )
 
-            if not candidates:
-                raise APIConnectionError("No writable characteristic found on device!")
-
-            # Preferir write-without-response; fallback para write normal
-            chosen, chosen_props = None, set()
-            for char, props in candidates:
-                if "write-without-response" in props:
-                    chosen, chosen_props = char, props
-                    break
-            if chosen is None:
-                chosen, chosen_props = candidates[0]
-
-            self.characteristic_uuid = getattr(chosen, "uuid", None)
-            if not self.characteristic_uuid:
-                raise APIConnectionError("Writable characteristic has no UUID")
-
-            # Se tiver 'write' e não tiver apenas 'write-without-response', pedimos response
-            self._write_response_required = (
-                "write" in chosen_props and "write-without-response" not in chosen_props
-            )
-
-            _LOGGER.debug(
-                "Selected write characteristic: %s (props=%s, response_required=%s)",
-                self.characteristic_uuid, sorted(list(chosen_props)), self._write_response_required
-            )
-            return ""
-        except NameError as e:
-            _LOGGER.error("NameError durante a descoberta GATT: %r", e, exc_info=True)
-            raise
-        except Exception as e:
-            _LOGGER.debug("Erro em connect_with_retries: %s: %r", type(e).__name__, e, exc_info=True)
-            raise
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def _write_with_auth_retry(self, client: BleakClient, payload: bytes) -> None:
-        """Escreve na characteristic; se BlueZ exigir autorização, tenta emparelhar e re-tenta uma vez."""
-        try:
-            await client.write_gatt_char(self.characteristic_uuid, payload, response=self._write_response_required)
-        except BleakDBusError as e:
-            msg = f"{e}"
-            if "NotAuthorized" in msg or "org.bluez.Error.NotAuthorized" in msg:
-                _LOGGER.warning("Write devolveu NotAuthorized → a tentar emparelhar e repetir...")
-                try:
-                    if hasattr(client, "pair"):
-                        await client.pair()
-                        await asyncio.sleep(0.5)
-                    await client.write_gatt_char(self.characteristic_uuid, payload, response=self._write_response_required)
-                    _LOGGER.debug("Write após pairing OK")
-                    return
-                except Exception as e2:
-                    _LOGGER.error("Falha no re-write após pairing: %r", e2, exc_info=True)
-                    raise
-            raise
-
-    async def sprinkle_station_x_for_y_minutes(self, station: int, minutes: int):
-        """Sprinkle a specific station for a specified number of minutes """
-        try:
-            await self.sprinkle_station_x_for_y_minutes_with_retry(station, minutes)
-        except Exception as ex:
-            _LOGGER.debug(f"Error connecting to Solem device after retries!, ex: {ex}", exc_info=True)
-            raise APIConnectionError("Error connecting to Solem device after retries!")
-
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def sprinkle_station_x_for_y_minutes_with_retry(self, station: int, minutes: int):
-        """Function with retries"""
-        if self.mock:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug(f"writing command: Sprinkle station {station} for {minutes} minutes")
-
-                command = struct.pack(">HBBBH", 0x3105, 0x12, station & 0xFF, 0x00, (minutes * 60) & 0xFFFF)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("Committing")
-                commit_command = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit_command)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to API")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def stop_manual_sprinkle(self):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug("writing command: Stop manual sprinkle")
-                command = struct.pack(">HBBBH", 0x3105, 0x15, 0x00, 0xFF, 0x0000)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def list_characteristics(self):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug("Listing services")
-                services = await client.get_services()
-                for service in services:
-                    _LOGGER.info(f"Service: {service.uuid}")
-                    for char in service.characteristics:
-                        _LOGGER.info(f"  Characteristic: {char.uuid} props={getattr(char, 'properties', [])}")
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def turn_off_permanent(self):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug("writing command: Turn off permanent")
-                command = struct.pack(">HBBBH", 0x3105, 0xC0, 0x00, 0x00, 0x0000)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def turn_off_x_days(self, days: int):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug("writing command: Turn off for X days")
-                command = struct.pack(">HBBBH", 0x3105, 0xC0, 0x00, days & 0xFF, 0x0000)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def turn_on(self):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug("writing command: Turn on")
-                command = struct.pack(">HBBBH", 0x3105, 0xA0, 0x00, 0x01, 0x0000)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def sprinkle_all_stations_for_y_minutes(self, minutes: int):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug(f"writing command: Sprinkle all stations for {minutes} minutes")
-                command = struct.pack(">HBBBH", 0x3105, 0x11, 0x00, 0x00, (minutes * 60) & 0xFFFF)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def run_program_x(self, program: int):
-        if self.mock is True:
-            _LOGGER.debug("Mock=True, Returning from function...")
-            return
-
-        if self.characteristic_uuid is None:
-            await self.connect()
-
-        client = await self._connect_client()
-        try:
-            if client.is_connected:
-                _LOGGER.debug("Connected: True")
-                _LOGGER.debug(f"writing command: Run program {program}")
-                command = struct.pack(">HBBBH", 0x3105, 0x14, 0x00, program & 0xFF, 0x0000)
-                await self._write_with_auth_retry(client, command)
-
-                _LOGGER.debug("committing")
-                commit = struct.pack(">BB", 0x3B, 0x00)
-                await self._write_with_auth_retry(client, commit)
-
-                _LOGGER.debug("Success")
-            else:
-                _LOGGER.debug("Failed connecting!")
-                raise APIConnectionError("Timeout connecting to api")
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
+    async def run_program_x(self, program: int) -> None:
+        """Run a stored program."""
+        await self._async_call_toolkit_service("run_program_x", {"program": int(program)})
 
 class OpenWeatherMapAPI:
     """Class for OpenWeatherMap API."""
