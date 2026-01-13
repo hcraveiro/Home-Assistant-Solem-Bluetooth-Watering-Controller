@@ -5,7 +5,9 @@
     "@hcraveiro"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "solem_toolkit"
+  ],
   "documentation": "https://github.com/hcraveiro/Home-Assistant-Solem-Bluetooth-Watering-Controller",
   "homekit": {},
   "iot_class": "local_polling",
