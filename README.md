@@ -13,7 +13,7 @@ Integrate Solem Watering Bluetooth Controllers (only tested in BL-IP) into your 
 
 ## Installation
 
-This integration can be added as a custom repository in HACS and from there you can install it.
+This integration can be added as a custom repository in HACS and from there you can install it. It has a dependency on [Solem Toolkit](https://github.com/hcraveiro/Home-Assistant-Solem-Toolkit) for executing Solem operations, namely sprinkling X minutes in a specific station, stopping sprinkly, etc.
 
 When the integration is installed in HACS, you need to add it in Home Assistant: Settings → Devices & Services → Add Integration → Search for Solem Bluetooth Watering Controller.
 
