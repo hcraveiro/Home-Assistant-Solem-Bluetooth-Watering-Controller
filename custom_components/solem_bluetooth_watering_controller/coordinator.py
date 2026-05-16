@@ -152,6 +152,8 @@ class SolemCoordinator(DataUpdateCoordinator):
         self.total_water_consumption = 0
         
         self.irrigation_manual_duration = 10  # <-- este evita o erro atual
+        # MODIFICA: durata per singola stazione (default 10 minuti per ciascuna)
+        self.irrigation_manual_duration_per_station = [10] * self.num_stations
         self.water_flow_rate = [12] * self.num_stations
         self.sprinkle_total_amount_today = [0.0] * self.num_stations
         self.sprinkle_target_amount_today = [0.0] * self.num_stations
@@ -246,6 +248,11 @@ class SolemCoordinator(DataUpdateCoordinator):
             if self.weather_api:
                 self.weather_api._cache_current = self.is_raining_now_json
             self.irrigation_manual_duration = storage_data.get("irrigation_manual_duration")
+            # MODIFICA: carica durate per stazione, con fallback alla durata globale
+            self.irrigation_manual_duration_per_station = storage_data.get("irrigation_manual_duration_per_station")
+            if not isinstance(self.irrigation_manual_duration_per_station, list) or len(self.irrigation_manual_duration_per_station) != self.num_stations:
+                _LOGGER.debug(f"{self.controller_mac_address} - Initializing irrigation_manual_duration_per_station with default values.")
+                self.irrigation_manual_duration_per_station = [self.irrigation_manual_duration or 10] * self.num_stations
             self.rain_time_today = storage_data.get("rain_time_today", 0)
             self.rain_total_amount_today = storage_data.get("rain_total_amount_today", 0)
             self.rain_total_amount_forecasted_today = storage_data.get("rain_total_amount_forecasted_today", 0)
@@ -322,6 +329,8 @@ class SolemCoordinator(DataUpdateCoordinator):
             self.rain_total_amount_forecasted_today = 0
             self.total_water_consumption = 0
             self.irrigation_manual_duration = 10
+            # MODIFICA: default per stazione quando non c'è storage
+            self.irrigation_manual_duration_per_station = [10] * self.num_stations
             self.water_flow_rate = [12] * self.num_stations
             self.sprinkle_total_amount_today = [0.0] * self.num_stations
             self.sprinkle_target_amount_today = [0.0] * self.num_stations
@@ -351,6 +360,8 @@ class SolemCoordinator(DataUpdateCoordinator):
             "last_sprinkle": ensure_aware(self.last_sprinkle or datetime.min).strftime("%Y-%m-%d %H:%M:%S"),
             "last_rain": ensure_aware(self.last_rain or datetime.min).strftime("%Y-%m-%d %H:%M:%S"),
             "irrigation_manual_duration": self.irrigation_manual_duration,
+            # MODIFICA: salva durate per stazione
+            "irrigation_manual_duration_per_station": self.irrigation_manual_duration_per_station,
             "water_flow_rate": self.water_flow_rate,
             "rain_time_today": self.rain_time_today,
             "rain_total_amount_today": self.rain_total_amount_today,
@@ -755,6 +766,7 @@ class SolemCoordinator(DataUpdateCoordinator):
         water_flow_counter = 701
         stations_counter = 801
         buttons_counter = 901
+        duration_station_counter = 1001  # MODIFICA: nuovo contatore per durate per stazione
         
         if self.weather_api:
             will_it_rain_result = await self.weather_api.will_it_rain()
@@ -817,7 +829,7 @@ class SolemCoordinator(DataUpdateCoordinator):
             })
             stations_counter += 1
 
-        # Configurations
+        # Configurations - durata manuale globale (mantenuta per compatibilità)
         data.append({
             "device_id": f"{self.controller_mac_address}_irrigation_manual_duration",
             "device_type": "IRRIGATION_DURATION_NUMBER",
@@ -829,8 +841,22 @@ class SolemCoordinator(DataUpdateCoordinator):
             "last_reboot": None,
         })
         counter += 1
+
+        # MODIFICA: durata manuale per singola stazione
+        for station_id in range(1, self.num_stations + 1):
+            data.append({
+                "device_id": f"{self.controller_mac_address}_irrigation_manual_duration_station_{station_id}",
+                "device_type": "IRRIGATION_DURATION_STATION_NUMBER",
+                "device_name": f"Irrigation Manual Duration Station {station_id}",
+                "device_uid": mac_to_uuid(self.controller_mac_address, duration_station_counter),
+                "software_version": "1.0",
+                "value": self.irrigation_manual_duration_per_station[station_id - 1],
+                "icon": "mdi:clock-time-five-outline",
+                "last_reboot": None,
+            })
+            duration_station_counter += 1
         
-        # Stations
+        # Stations water flow
         for station_id in range(1, self.num_stations + 1):
             data.append({
                 "device_id": f"{self.controller_mac_address}_water_flow_rate_{station_id}",
@@ -1070,7 +1096,8 @@ class SolemCoordinator(DataUpdateCoordinator):
         return round(remaining_mm, 2)
 
     async def start_irrigation(self, station: int, minutes: int | None = None):
-        duration = int(minutes if minutes is not None else self.irrigation_manual_duration)
+        # MODIFICA: usa la durata per stazione se minutes non è passato esplicitamente
+        duration = int(minutes if minutes is not None else self.irrigation_manual_duration_per_station[station - 1])
         _LOGGER.info(f"{self.controller_mac_address} - Going to start watering on station {station} for {duration} minutes...")
         
         self.irrigation_stop_event.clear()
