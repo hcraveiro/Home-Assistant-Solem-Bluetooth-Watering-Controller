@@ -42,19 +42,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ):
     """Set up the Sensors."""
-    # This gets the data update coordinator from the config entry runtime data as specified in your __init__.py
     coordinator: SolemCoordinator = config_entry.runtime_data.coordinator
-
-    # ----------------------------------------------------------------------------
-    # Here we enumerate the sensors in your data value from your
-    # DataUpdateCoordinator and add an instance of your sensor class to a list
-    # for each one.
-    # This maybe different in your specific case, depending on how your data is
-    # structured
-    # ----------------------------------------------------------------------------
 
     number_types = [
         NumberTypeClass("IRRIGATION_DURATION_NUMBER", "value", IrrigationManualDuration),
+        NumberTypeClass("IRRIGATION_DURATION_STATION_NUMBER", "value", IrrigationManualDurationPerStation),  # MODIFICA
         NumberTypeClass("WATER_FLOW_NUMBER", "value", IrrigationFlowRate),
     ]
 
@@ -70,7 +62,6 @@ async def async_setup_entry(
             ]
         )
 
-    # Now create the numbers.
     async_add_entities(numbers)
 
 
@@ -102,6 +93,31 @@ class IrrigationManualDuration(SolemNumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self.coordinator.irrigation_manual_duration = value
+        self.async_write_ha_state()
+
+
+# MODIFICA: nuova classe per la durata per singola stazione
+class IrrigationManualDurationPerStation(SolemNumberEntity):
+    def __init__(self, coordinator: SolemCoordinator, device: dict[str, Any], parameter: str):
+        super().__init__(coordinator, device, parameter)
+        self._attr_min_value = 1
+        self._attr_max_value = 60
+        self._attr_native_min_value = 1
+        self._attr_native_max_value = 60
+        self._attr_step = 1
+        station_id = int(self.device_id.rsplit('_', 1)[-1])
+        self._attr_native_value = self.coordinator.irrigation_manual_duration_per_station[station_id - 1]
+
+    @property
+    def native_value(self) -> float | None:
+        station_id = int(self.device_id.rsplit('_', 1)[-1])
+        return self.coordinator.irrigation_manual_duration_per_station[station_id - 1]
+
+    async def async_set_native_value(self, value: float) -> None:
+        station_id = int(self.device_id.rsplit('_', 1)[-1])
+        self._attr_native_value = value
+        self.coordinator.irrigation_manual_duration_per_station[station_id - 1] = value
+        await self.coordinator.save_persistent_data()
         self.async_write_ha_state()
 
 
