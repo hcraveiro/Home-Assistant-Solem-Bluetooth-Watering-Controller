@@ -1,9 +1,15 @@
 # Home Assistant Solem Bluetooth Watering Controller Integration
 
+> [!IMPORTANT]
+> **Deprecated — maintenance mode.** This integration is no longer under active development. For new installations and future irrigation features, use [Smart Water Controller](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller), which supports compatible Solem Bluetooth controllers through [Solem Toolkit](https://github.com/hcraveiro/Home-Assistant-Solem-Toolkit). Solem Toolkit remains maintained as the shared Bluetooth command layer.
+>
+> Existing installations can continue to use this legacy integration, but new features and irrigation-related bug fixes will be directed to Smart Water Controller. Migration is **manual**: install and configure Smart Water Controller with the **Solem Toolkit** control method, recreate your schedules and dashboard cards, review automations and entity IDs, and verify that manual start/stop works before enabling automatic watering. **Disable the old integration's schedules before enabling the new ones** to avoid two integrations controlling the same device. No automatic migration of settings or entity IDs is provided.
+
+
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/release/hcraveiro/Home-Assistant-Solem-Bluetooth-Watering-Controller.svg)](https://github.com/hcraveiro/Home-Assistant-Solem-Bluetooth-Watering-Controller/releases/)
 
-Integrate Solem Watering Bluetooth Controllers (only tested in BL-IP) into your Home Assistant. This Integration allows you to manually control the irrigation or to createa a schedule.
+Legacy Home Assistant integration for Solem Bluetooth watering controllers (tested with BL-IP). For new setups, use Smart Water Controller instead.
 
 - [Home Assistant Solem Bluetooth Watering Controller Integration](#home-assistant-solem-bluetooth-watering-controller-integration)
     - [Installation](#installation)
@@ -12,6 +18,9 @@ Integrate Solem Watering Bluetooth Controllers (only tested in BL-IP) into your 
     - [FAQ](#faq)
 
 ## Installation
+
+**Legacy installations only.** New users should install [Smart Water Controller](https://github.com/hcraveiro/Home-Assistant-Smart-Water-Controller) instead.
+
 
 This integration can be added as a custom repository in HACS and from there you can install it. It has a dependency on [Solem Toolkit](https://github.com/hcraveiro/Home-Assistant-Solem-Toolkit) for executing Solem operations, namely sprinkling X minutes in a specific station, stopping sprinkly, etc.
 
